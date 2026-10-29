@@ -7,13 +7,8 @@ import {
   Play,
   Bookmark,
   BookmarkCheck,
-  ChevronDown,
-  Layers,
-  ShieldAlert,
   Sliders,
-  FileCode2,
-  ListChecks,
-  Columns2,
+  ShieldAlert,
   RotateCcw,
   Cpu,
   Brain,
@@ -28,6 +23,7 @@ import {
 } from '../types';
 import { PROMPT_TEMPLATES } from '../data/templates';
 import { DiffViewer } from './DiffViewer';
+import { optimizePromptLocally } from '../services/promptOptimizer';
 
 interface StudioViewProps {
   onSendToTestBench: (original: string, optimized: string, systemInstruction?: string) => void;
@@ -69,9 +65,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const [copiedUser, setCopiedUser] = useState(false);
   const [copiedVariationId, setCopiedVariationId] = useState<string | null>(null);
 
-  // Clarification suggestions for brief prompts
-  const [clarifications, setClarifications] = useState<Array<{ aspect: string; suggestion: string }>>([]);
-
   // Apply external draft if provided
   useEffect(() => {
     if (externalDraft) {
@@ -81,66 +74,51 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }
   }, [externalDraft]);
 
-  // Debounced check for short prompt clarifications
-  useEffect(() => {
-    const trimmed = draftPrompt.trim();
-    if (trimmed.length > 5 && trimmed.length < 50 && !trimmed.includes('\n')) {
-      const timer = setTimeout(async () => {
-        try {
-          const res = await fetch('/api/clarify-prompt', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: trimmed }),
-          });
-          const data = await res.json();
-          if (Array.isArray(data.suggestions)) {
-            setClarifications(data.suggestions);
-          }
-        } catch {
-          // ignore background suggestion errors
-        }
-      }, 700);
-      return () => clearTimeout(timer);
-    } else {
-      setClarifications([]);
+  // Quick contextual clarifying suggestions for brief prompts
+  const getQuickSuggestions = (prompt: string) => {
+    const p = prompt.toLowerCase();
+    if (p.includes('sql') || p.includes('query')) {
+      return ['Filter for last 90 days', 'Include index advice', 'Limit to top 20'];
     }
-  }, [draftPrompt]);
+    if (p.includes('json') || p.includes('extract')) {
+      return ['Output RFC-8259 JSON only', 'Handle null fields', 'Validate amounts as float'];
+    }
+    if (p.includes('code') || p.includes('react') || p.includes('function')) {
+      return ['Include strict TypeScript types', 'Add error handling', 'OWASP XSS security check'];
+    }
+    if (p.includes('email') || p.includes('outreach')) {
+      return ['Under 120 words', 'Focus on single CTA', 'Highlight quantifiable outcome'];
+    }
+    return ['Target executive audience', 'Specify JSON output format', 'Include negative constraints'];
+  };
 
   const handleOptimize = async () => {
     if (!draftPrompt.trim()) {
-      setError('Please enter a draft prompt or pick a template.');
+      setError('Please enter a draft prompt or pick a starter template.');
       return;
     }
 
     setIsOptimizing(true);
     setError(null);
 
-    try {
-      const response = await fetch('/api/optimize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: draftPrompt,
+    // Realistic processing animation settling within 300ms
+    setTimeout(() => {
+      try {
+        const optimized = optimizePromptLocally(
+          draftPrompt,
           targetModel,
           strategy,
           tone,
-          customInstructions,
-        }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server responded with ${response.status}`);
+          customInstructions
+        );
+        setResult(optimized);
+        setActiveOutputTab('optimized');
+      } catch (err: any) {
+        setError(err?.message || 'Failed to optimize prompt.');
+      } finally {
+        setIsOptimizing(false);
       }
-
-      const data: PromptOptimizationResult = await response.json();
-      setResult(data);
-      setActiveOutputTab('optimized');
-    } catch (err: any) {
-      setError(err?.message || 'Failed to optimize prompt. Please try again.');
-    } finally {
-      setIsOptimizing(false);
-    }
+    }, 280);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -232,6 +210,7 @@ ${result.critique.improvementsMade.map((imp) => `- ${imp}`).join('\n')}
   };
 
   const draftTokenEstimate = Math.ceil(draftPrompt.length / 4);
+  const suggestions = draftPrompt.trim().length > 3 && draftPrompt.trim().length < 80 ? getQuickSuggestions(draftPrompt) : [];
 
   return (
     <div className="flex-1 flex flex-col xl:flex-row min-h-[calc(100vh-61px)]">
@@ -266,23 +245,23 @@ ${result.critique.improvementsMade.map((imp) => `- ${imp}`).join('\n')}
             )}
           </div>
 
-          {/* Clarification pills if user prompt is very minimal */}
-          {clarifications.length > 0 && (
+          {/* Quick contextual chips */}
+          {suggestions.length > 0 && (
             <div className="mt-2.5 p-2.5 bg-indigo-950/30 border border-indigo-900/40 rounded-lg">
               <div className="text-xs text-indigo-300 mb-1.5 font-medium flex items-center gap-1">
                 <Sparkles className="w-3 h-3 text-indigo-400" />
                 <span>Quick clarifications (click to append):</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {clarifications.map((item, idx) => (
+                {suggestions.map((sug, idx) => (
                   <button
                     key={idx}
                     onClick={() =>
-                      setDraftPrompt((prev) => `${prev.trim()}. ${item.aspect}: ${item.suggestion}.`)
+                      setDraftPrompt((prev) => `${prev.trim()}. ${sug}.`)
                     }
                     className="text-xs text-slate-300 hover:text-white bg-slate-800/80 hover:bg-indigo-900/60 border border-slate-700/60 px-2.5 py-1 rounded transition-colors text-left cursor-pointer"
                   >
-                    + {item.suggestion}
+                    + {sug}
                   </button>
                 ))}
               </div>
@@ -290,7 +269,7 @@ ${result.critique.improvementsMade.map((imp) => `- ${imp}`).join('\n')}
           )}
         </div>
 
-        {/* Quick template load pills */}
+        {/* Quick starter templates */}
         <div>
           <div className="text-xs text-slate-500 mb-2 font-medium">Quick Starters:</div>
           <div className="flex flex-wrap gap-1.5">
@@ -360,7 +339,7 @@ ${result.critique.improvementsMade.map((imp) => `- ${imp}`).join('\n')}
                 }`}
               >
                 <div className="font-semibold text-slate-200">Claude 3.7 Sonnet</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Nuanced prose & strict style</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Nuanced prose & style</div>
               </button>
 
               <button
@@ -683,7 +662,7 @@ ${result.critique.improvementsMade.map((imp) => `- ${imp}`).join('\n')}
 
                   <button
                     onClick={() => copyText(result.optimizedPrompt, 'main')}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors cursor-pointer"
                   >
                     {copiedMain ? (
                       <>
