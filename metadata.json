@@ -1,0 +1,6 @@
+{
+  "name": "PromptCraft AI - Advanced Prompt Optimizer",
+  "description": "Professional AI prompt engineering studio to analyze, refine, test, and optimize prompts for top LLMs with live comparison and structural frameworks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
